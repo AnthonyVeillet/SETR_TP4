@@ -1,7 +1,7 @@
 export ARCH:=arm
-export CROSS_COMPILE:=$(HOME)/arm-cross-comp-env/arm-raspbian-linux-gnueabi/bin/arm-linux-gnueabihf-
-# path du kernel utilisé au lab1 (possiblement différent pour installation custom)
-export KERNEL_SRC:=$(HOME)/rPi/linux-rpi-6.1.54-rt15.compiled/linux-rpi-6.1.54-rt15
+export CROSS_COMPILE:=$(HOME)/arm-cross-comp-env/arm-raspbian-linux-gnueabihf/bin/arm-linux-gnueabihf-
+# chemin du kernel compilé lors du lab1
+export KERNEL_SRC:=$(HOME)/linux-build
 
 obj-m += setr_driver_polling.o setr_driver_irq.o
 

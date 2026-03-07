@@ -36,7 +36,7 @@ Comme vous pouvez le constater, toutes les broches ne sont pas équivalentes. Ce
 
 ## 3. Préparation et outils nécessaires (logiciels)
 
-Les ébauches de code sont disponibles sur le dépôt Git suivant : [https://github.com/setr-ulaval/labo4-h25](https://github.com/setr-ulaval/labo4-h25). Vous y retrouvez, comme pour les autres laboratoires, un projet VScode et deux fichiers source correspondant aux deux pilotes que vous devrez implémenter. Notez que la configuration qui vous est fournie assume que vous avez bâti votre environnement de compilation croisée en suivant à la lettre les instructions du laboratoire 1. Pour cette même raison, vous ne devez *pas* avoir mis à jour le noyau installé sur votre Raspberry Pi.
+Les ébauches de code sont disponibles sur le dépôt Git suivant : [https://github.com/setr-ulaval/labo4-h26](https://github.com/setr-ulaval/labo4-h26). Vous y retrouvez, comme pour les autres laboratoires, un projet VScode et deux fichiers source correspondant aux deux pilotes que vous devrez implémenter. Notez que la configuration qui vous est fournie assume que vous avez bâti votre environnement de compilation croisée en suivant à la lettre les instructions du laboratoire 1. Pour cette même raison, vous ne devez *pas* avoir mis à jour le noyau installé sur votre Raspberry Pi.
 
 La compilation et l'édition de liens d'un module noyau constituent probablement une des tâches les plus délicates pour un environnement de compilation croisée. Le noyau Linux possède son propre système de compilation, basé sur *Make*; nous n'utiliserons donc pas CMake dans le cadre de ce laboratoire.
 
@@ -65,7 +65,7 @@ Notez que comme l'exécution d'un module noyau se fait logiquement en mode privi
 
 ## 4. Énoncé
 
-Le code de base et les fichiers *Makefile* nécessaires à la compilation des modules sont disponibles sur le dépôt Git suivant : [https://github.com/setr-ulaval/labo4-h25](https://github.com/setr-ulaval/labo4-h25).
+Le code de base et les fichiers *Makefile* nécessaires à la compilation des modules sont disponibles sur le dépôt Git suivant : [https://github.com/setr-ulaval/labo4-h26](https://github.com/setr-ulaval/labo4-h26).
 
 > Note : comme pour les autres laboratoires, le code de base fourni ne **compile pas** et génère plusieurs avertissements (la plupart concernant des variables globales inutilisées). Ceci est normal, vous devez remplir les différents *TODO* indiqués dans les fichiers afin de permettre la compilation.
 
@@ -148,7 +148,7 @@ Le laboratoire comporte deux livrables :
 1. Module du pilote effectuant une lecture du clavier par « pooling » (fichier *setr_driver_polling.c*);
 2. Module du pilote effectuant une lecture du clavier par interruption (fichier *setr_driver_irq.c*).
 
-Ce travail doit être réalisé **en équipe de deux**, la charge de travail étant à répartir équitablement entre les deux membres de l'équipe. Aucun rapport n'est à remettre, mais vous devez soumettre votre code source dans monPortail avant le **27 mars 2025, 17h00**. Ensuite, lors de la séance de laboratoire du **28 mars 2025**, les deux équipiers doivent être en mesure individuellement d'expliquer leur approche et de démontrer le bon fonctionnement de l'ensemble de la solution de l'équipe du laboratoire. Si vous ne pouvez pas vous y présenter, contactez l'équipe pédagogique du cours dans les plus brefs délais afin de convenir d'une date d'évaluation alternative. Ce travail compte pour **12%** de la note totale du cours. Comme pour les travaux précédents, votre code doit compiler **sans avertissements** de la part de GCC.
+Ce travail doit être réalisé **en équipe de deux**, la charge de travail étant à répartir équitablement entre les deux membres de l'équipe. Aucun rapport n'est à remettre, mais vous devez soumettre votre code source dans monPortail avant le **15 avril 2026, 23h59**. Ensuite, lors de la séance de laboratoire du **17 avril 2026, 9h30**, les **deux** équipiers doivent être présents pour l'évaluation individuelle de 30 minutes. Si vous ne pouvez pas vous y présenter, contactez l'équipe pédagogique du cours dans les plus brefs délais afin de convenir d'une date d'évaluation alternative. Ce travail compte pour **12%** de la note totale du cours. Comme pour les travaux précédents, votre code doit compiler **sans avertissements** de la part de GCC.
 
 
 Notre évaluation se fera sur le Raspberry Pi de l'enseignant ou de l'assistant, connecté à un clavier 3 ou 4 colonnes (selon vos préférences) et comprendra notamment les éléments suivants:
@@ -168,29 +168,34 @@ Il se peut que nous utilisions des outils tel que htop pour monitorer l'utilisat
 
 Le barême d'évaluation détaillé sera le suivant (laboratoire noté sur 20 points) :
 
-#### 5.1.1. Qualité du code remis (5 points)
+#### 5.1.1. Qualité du code remis (7 points)
 
-* (3 pts) Le code C est valide, complet, ne contient pas d'erreurs empêchant le bon déroulement des programmes et utilise l'API "GPIO Descriptor Consumer Interface" (les fonctions dont le nom commence par `gpiod_`).
+* (4 pts) Le code C est valide, complet, ne contient pas d'erreurs empêchant le bon déroulement des programmes et utilise l'API "GPIO Descriptor Consumer Interface" (les fonctions dont le nom commence par `gpiod_`).
 * (1 pts) Les deux modules compilent sans avertissement (*warning*) de la part du compilateur.
-* (1 pts) La synchronisation entre le thread d'écriture et la fonction de lecture est adéquate, de même que la gestion du tampon circulaire.
+* (2 pts) La synchronisation entre le thread d'écriture et la fonction de lecture est adéquate, de même que la gestion du tampon circulaire.
 
-#### 5.1.2. Validité de la solution (10 points)
+#### 5.1.2. Validité de la solution (13 points)
 
 > **Attention** : un programme ne compilant pas obtient automatiquement une note de **zéro** pour cette section.
 
 * (1 pts) Le module noyau se charge sans erreur, s'initialise correctement et est en mesure de quitter correctement en libérant les ressources acquises.
 * (2 pts) Le fichier /dev/setrclavier est bien créé et fonctionne comme demandé.
-* (3 pts) Pour le premier module, le clavier est lu par *polling* correctement (les valeurs retournées sont les bonnes, dans le bon ordre).
-* (3 pts) Pour le second module, les interruptions sont bien gérées et le clavier est lu sans nécessiter un *polling* continuel lorsqu'aucune touche n'est enfoncée.
-* (1 pts) Les pilotes gèrent la pression simultanée de plusieurs touches (au moins 2).
+* (4 pts) Pour le premier module, le clavier est lu par *polling* correctement (les valeurs retournées sont les bonnes, dans le bon ordre).
+* (4 pts) Pour le second module, les interruptions sont bien gérées et le clavier est lu sans nécessiter un *polling* continuel lorsqu'aucune touche n'est enfoncée.
+* (2 pts) Les pilotes gèrent la pression simultanée de plusieurs touches (au moins 2).
 
-#### 5.1.3. Justesse des explications et réponses aux questions (5 points)
+#### 5.1.3. Évaluation individuelle
 
-* (5 pts) Les étudiants sont en mesure d'expliquer l'approche utilisée et de répondre aux questions concernant leur code et la théorie liée au laboratoire.
+Une évaluation individuelle écrite portant sur le laboratoire sera tenue, *en personne*, à la séance d'atelier du 17 avril 2026, à 9h30. La note obtenue à cette évaluation deviendra un facteur multiplicatif appliqué individuellement sur la note d'équipe. Par exemple, une note de 75% à l'évaluation individuelle combinée à une note de 90% pour le code remis résultera en une note de 0.75*0.90 = 67.5%. Une absence non-motivée à cette évaluation entraîne une note (et donc un facteur multiplicatif) de 0.
+
+#### 5.1.4. Questionnaire sur l'utilisation de l'IA
+
+Votre remise _doit_ inclure le fichier `UTILISATION_IA.txt` dûment complété. Les réponses ne sont pas évaluées en tant que telles, mais ne pas remettre ce fichier (ou le remettre dans son état initial, sans modifications et réponses aux questions) entraîne une pénalité automatique de 10% sur la note d'équipe.
+
 
 ## 6. Ressources et lectures connexes
 
-* [Le dépôt Git contenant les fichiers de base](https://github.com/setr-ulaval/labo4-h25)
+* [Le dépôt Git contenant les fichiers de base](https://github.com/setr-ulaval/labo4-h26)
 * [Linux Device Drivers, Third Edition](https://lwn.net/Kernel/LDD3/), un excellent guide (bien que pas totalement à jour) sur l'écriture de pilotes pour le noyau Linux
 * [Référence](https://docs.kernel.org/driver-api/gpio/index.html) et [Documentation des fonctions d'accès aux GPIO](https://www.kernel.org/doc/html/v6.1/driver-api/gpio/consumer.html) dans le noyau Linux
 
