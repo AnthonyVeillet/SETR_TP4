@@ -4,11 +4,10 @@
             "name": "Linux",
             "includePath": [
                 "${workspaceRoot}",
-                "${env.HOME}/rPi/linux-rpi-6.1.54-rt15/include",
-                "${env.HOME}/rPi/linux-rpi-6.1.54-rt15/arch/arm/include",
-                "${env.HOME}/rPi/linux-rpi-6.1.54-rt15.compiled/linux-rpi-6.1.54-rt15/arch/arm/include/generated/",
-                "${env.HOME}/arm-cross-comp-env/arm-raspbian-linux-gnueabi/arm-raspbian-linux-gnueabi/sysroot/usr/lib/gcc/arm-linux-gnueabihf/12/include/",
-                "${env.HOME}/rPi/linux-rpi-6.1.54-rt15.compiled/linux-rpi-6.1.54-rt15/include"
+                "${env.HOME}/linux-build/include",
+                "${env.HOME}/linux-build/arch/arm/include",
+                "${env.HOME}/linux-build/arch/arm/include/generated/",
+                "${env.HOME}/arm-cross-comp-env/arm-raspbian-linux-gnueabihf/arm-raspbian-linux-gnueabihf/sysroot/usr/lib/gcc/arm-linux-gnueabihf/14/include/",
             ],
             "defines": [
                 "__ARM_PCS_VFP", 
@@ -22,7 +21,7 @@
                 "limitSymbolsToIncludedHeaders": true,
                 "databaseFilename": ""
             },
-            "compilerPath": "${env.HOME}/arm-cross-comp-env/arm-raspbian-linux-gnueabi/bin/arm-raspbian-linux-gnueabi-gcc",
+            "compilerPath": "${env.HOME}/arm-cross-comp-env/arm-raspbian-linux-gnueabihf/bin/arm-raspbian-linux-gnueabihf-gcc",
             "cStandard": "gnu17",
             "cppStandard": "gnu++17"
         }
