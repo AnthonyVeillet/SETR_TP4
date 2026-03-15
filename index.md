@@ -40,7 +40,7 @@ Les ébauches de code sont disponibles sur le dépôt Git suivant : [https://git
 
 La compilation et l'édition de liens d'un module noyau constituent probablement une des tâches les plus délicates pour un environnement de compilation croisée. Le noyau Linux possède son propre système de compilation, basé sur *Make*; nous n'utiliserons donc pas CMake dans le cadre de ce laboratoire.
 
-### 3.1. Téléchargement du noyau
+### 3.1. Lien avec le noyau compilé au laboratoire 1
 
 Compiler un module noyau requiert d'avoir une version compilée du noyau sur votre machine hôte. Heureusement, grâce à vos manipulations du laboratoire 1, c'est votre cas! Vous devriez avoir, dans `$HOME/linux-build`, le dossier contenant le noyau compilé pour votre Raspberry Pi Zero W. Si, pour une raison ou une autre, vous avez compilé ou installé le noyau ailleurs, modifiez la ligne 4 du `Makefile` du projet (celle qui déclare `KERNEL_SRC`) avec votre propre chemin.
 
