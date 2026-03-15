@@ -51,8 +51,6 @@ Contrairement à l'habitude, n'utilisez pas la commande `CMake : Build` pour com
 
 > Notez que tout comme pour les laboratoires précédents, vos fichiers doivent non seulement compiler sans erreur, mais aussi **sans avertissement** de la part du compilateur!
 
-> Note : la ligne `warning: the compiler differs from the one used to build the kernel` n'est **pas** un avertissement du compilateur. Vous pouvez l'ignorer.
-
 
 ### 3.3. Insertion des modules et débogage
 
