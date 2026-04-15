@@ -156,7 +156,9 @@ static unsigned int irqId[NOMBRE_COLONNES];
 
 
 
-void func_tasklet_polling(unsigned long paramf){
+/* ===== DEBUT MODIFICATION : ajout de static pour éviter le warning -Wmissing-prototypes ===== */
+static void func_tasklet_polling(unsigned long paramf){
+/* ===== FIN MODIFICATION ===== */
     // TODO
     // Déclarez _toutes_ vos variables locales ici (le module est compilé avec un standard générant
     // un warning si une variable est déclarée après toute ligne de code)
