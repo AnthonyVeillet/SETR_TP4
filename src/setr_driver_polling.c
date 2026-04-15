@@ -67,6 +67,10 @@ static char   data[TAILLE_BUFFER] = {0};   // Buffer circulaire contenant les ca
 static size_t posCouranteLecture = 0;      // Position de la prochaine lecture dans le buffer
 static size_t posCouranteEcriture = 0;     // Position de la prochaine écriture dans le buffer
 
+/* ===== DEBUT AJOUT : compteur d'éléments pour le buffer circulaire ===== */
+static size_t bufferCount = 0;             // Nombre d'éléments actuellement dans le buffer
+/* ===== FIN AJOUT ===== */
+
 static struct class*  setrClasse  = NULL;  // Contiendra les informations sur la classe de notre pilote
 static struct device* setrDevice = NULL;   // Contiendra les informations sur le périphérique associé
 
@@ -151,6 +155,12 @@ static int pollClavier(void *arg){
     // Déclarez _toutes_ vos variables locales ici (le module est compilé avec un standard générant
     // un warning si une variable est déclarée après toute ligne de code)
     
+    /* ===== DEBUT AJOUT ===== */
+    int ligne, colonne;
+    unsigned long bitmapEcriture;
+    unsigned long bitmapLecture;
+    int etatCourant[NOMBRE_LIGNES][NOMBRE_COLONNES];
+    /* ===== FIN AJOUT ===== */
     
     printk(KERN_INFO "SETR_CLAVIER : Poll clavier declenche! \n");
     while(!kthread_should_stop()){           // Permet de s'arrêter en douceur lorsque kthread_stop() sera appelé
@@ -166,6 +176,63 @@ static int pollClavier(void *arg){
       // 3) Selon ces valeurs et le contenu de dernierEtat, détermine si une nouvelle touche a été pressée
       // 4) Met à jour le buffer et dernierEtat en s'assurant d'éviter les race conditions avec le reste du module
 
+      /* ===== DEBUT AJOUT : scan complet du clavier ===== */
+
+      /* Étape 1 : construire l'état courant complet du clavier */
+      for (ligne = 0; ligne < NOMBRE_LIGNES; ligne++) {
+          /* Activer uniquement la ligne courante (bit ligne à 1, les autres à 0) */
+          bitmapEcriture = (1UL << ligne);
+          gpiod_set_array_value(gpioEcriture->ndescs,
+                                gpioEcriture->desc,
+                                gpioEcriture->info,
+                                &bitmapEcriture);
+
+          /* Petite attente pour laisser le signal se stabiliser */
+          udelay(5);
+
+          /* Lire l'état des colonnes */
+          bitmapLecture = 0;
+          gpiod_get_array_value(gpioLecture->ndescs,
+                                gpioLecture->desc,
+                                gpioLecture->info,
+                                &bitmapLecture);
+
+          /* Stocker l'état de chaque colonne pour cette ligne */
+          for (colonne = 0; colonne < NOMBRE_COLONNES; colonne++) {
+              etatCourant[ligne][colonne] = (bitmapLecture >> colonne) & 1;
+          }
+      }
+
+      /* Désactiver toutes les lignes après le scan */
+      bitmapEcriture = 0;
+      gpiod_set_array_value(gpioEcriture->ndescs,
+                            gpioEcriture->desc,
+                            gpioEcriture->info,
+                            &bitmapEcriture);
+
+      /* Étape 2 : comparer avec dernierEtat et mettre à jour le buffer */
+      mutex_lock(&sync);
+      for (ligne = 0; ligne < NOMBRE_LIGNES; ligne++) {
+          for (colonne = 0; colonne < NOMBRE_COLONNES; colonne++) {
+              /* Détecter uniquement les nouvelles pressions (transition 0 -> 1) */
+              if (etatCourant[ligne][colonne] && !dernierEtat[ligne][colonne]) {
+                  /* Nouvelle touche pressée : écrire dans le buffer */
+                  data[posCouranteEcriture] = valeursClavier[ligne][colonne];
+                  posCouranteEcriture = (posCouranteEcriture + 1) % TAILLE_BUFFER;
+                  if (bufferCount < TAILLE_BUFFER) {
+                      bufferCount++;
+                  } else {
+                      /* Buffer plein : écraser le plus ancien en avançant la lecture */
+                      posCouranteLecture = (posCouranteLecture + 1) % TAILLE_BUFFER;
+                  }
+              }
+              /* Mettre à jour dernierEtat pour cette cellule */
+              dernierEtat[ligne][colonne] = etatCourant[ligne][colonne];
+          }
+      }
+      mutex_unlock(&sync);
+
+      /* ===== FIN AJOUT ===== */
 
       set_current_state(TASK_INTERRUPTIBLE); // On indique qu'on peut être interrompu
       msleep(pausePollingMs);                // On se met en pause un certain temps
@@ -180,6 +247,10 @@ static int __init setrclavier_init(void){
     // Déclarez _toutes_ vos variables locales ici (le module est compilé avec un standard générant
     // un warning si une variable est déclarée après toute ligne de code)
     
+    /* ===== DEBUT AJOUT ===== */
+    int err;
+    /* ===== FIN AJOUT ===== */
+
     printk(KERN_INFO "SETR_CLAVIER : Initialisation du driver commencee\n");
 
     // On enregistre notre pilote
@@ -220,7 +291,31 @@ static int __init setrclavier_init(void){
     //
     // Vous devez également initialiser le mutex de synchronisation.
 
+    /* ===== DEBUT AJOUT : initialisation GPIO et mutex ===== */
 
+    /* 1) Enregistrer la table de correspondances GPIO */
+    gpiod_add_lookup_table(&gpios_table);
+
+    /* 2) Obtenir les GPIO d'écriture (lignes) en sortie, initialement bas */
+    gpioEcriture = gpiod_get_array(setrDevice, "ecriture", GPIOD_OUT_LOW);
+    if (IS_ERR(gpioEcriture)) {
+        err = PTR_ERR(gpioEcriture);
+        printk(KERN_ALERT "SETR_CLAVIER : Erreur lors de l'obtention des GPIO ecriture (%d)\n", err);
+        goto err_gpio_ecriture;
+    }
+
+    /* 3) Obtenir les GPIO de lecture (colonnes) en entrée */
+    gpioLecture = gpiod_get_array(setrDevice, "lecture", GPIOD_IN);
+    if (IS_ERR(gpioLecture)) {
+        err = PTR_ERR(gpioLecture);
+        printk(KERN_ALERT "SETR_CLAVIER : Erreur lors de l'obtention des GPIO lecture (%d)\n", err);
+        goto err_gpio_lecture;
+    }
+
+    /* 4) Initialiser le mutex de synchronisation */
+    mutex_init(&sync);
+
+    /* ===== FIN AJOUT ===== */
 
     // Le mutex devrait avoir été initialisé avant d'appeler la ligne suivante!
     task = kthread_run(pollClavier, NULL, "Thread_polling_clavier");
@@ -228,6 +323,17 @@ static int __init setrclavier_init(void){
     printk(KERN_INFO "SETR_CLAVIER : Fin de l'Initialisation!\n"); // Made it! device was initialized
 
     return 0;
+
+    /* ===== DEBUT AJOUT : labels de cleanup en cas d'erreur ===== */
+err_gpio_lecture:
+    gpiod_put_array(gpioEcriture);
+err_gpio_ecriture:
+    gpiod_remove_lookup_table(&gpios_table);
+    device_destroy(setrClasse, MKDEV(majorNumber, 0));
+    class_destroy(setrClasse);
+    unregister_chrdev(majorNumber, DEV_NAME);
+    return err;
+    /* ===== FIN AJOUT ===== */
 }
 
 
@@ -243,6 +349,12 @@ static void __exit setrclavier_exit(void){
     // Écrivez le code permettant de relâcher (libérer) les GPIO
     // N'oubliez pas également de retirer la table de correspondances avec
     // gpiod_remove_lookup_table
+
+    /* ===== DEBUT AJOUT : libération des GPIO ===== */
+    gpiod_put_array(gpioLecture);
+    gpiod_put_array(gpioEcriture);
+    gpiod_remove_lookup_table(&gpios_table);
+    /* ===== FIN AJOUT ===== */
 
     // On retire correctement les différentes composantes du pilote
     device_destroy(setrClasse, MKDEV(majorNumber, 0));
@@ -270,6 +382,13 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *of
     // Déclarez _toutes_ vos variables locales ici (le module est compilé avec un standard générant
     // un warning si une variable est déclarée après toute ligne de code)
 
+    /* ===== DEBUT AJOUT ===== */
+    size_t nBytes;
+    size_t firstChunk;
+    size_t secondChunk;
+    int err;
+    /* ===== FIN AJOUT ===== */
+
     // TODO
     // Implémentez cette fonction de lecture
     // Celle-ci doit copier N caractères dans le buffer fourni en paramètre, N étant le minimum
@@ -283,6 +402,48 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *of
     // posCouranteLecture, et vous devez gérer ce cas sans perdre de caractères et en respectant les
     // autres conditions (par exemple, ne jamais copier plus que len caractères).
 
+    /* ===== DEBUT AJOUT : lecture du buffer circulaire ===== */
+
+    mutex_lock(&sync);
+
+    /* Nombre d'octets à copier = min(demandé, disponible) */
+    nBytes = min(len, bufferCount);
+
+    if (nBytes == 0) {
+        mutex_unlock(&sync);
+        return 0;
+    }
+
+    /* Première partie : de posCouranteLecture jusqu'à la fin du tableau (ou nBytes) */
+    firstChunk = TAILLE_BUFFER - posCouranteLecture;
+    if (firstChunk > nBytes)
+        firstChunk = nBytes;
+
+    err = copy_to_user(buffer, &data[posCouranteLecture], firstChunk);
+    if (err) {
+        mutex_unlock(&sync);
+        return -EFAULT;
+    }
+
+    /* Deuxième partie : si wrap-around, copier depuis le début du tableau */
+    secondChunk = nBytes - firstChunk;
+    if (secondChunk > 0) {
+        err = copy_to_user(buffer + firstChunk, &data[0], secondChunk);
+        if (err) {
+            mutex_unlock(&sync);
+            return -EFAULT;
+        }
+    }
+
+    /* Avancer la position de lecture et décrémenter le compteur */
+    posCouranteLecture = (posCouranteLecture + nBytes) % TAILLE_BUFFER;
+    bufferCount -= nBytes;
+
+    mutex_unlock(&sync);
+
+    return (ssize_t)nBytes;
+
+    /* ===== FIN AJOUT ===== */
 }
 
 // On enregistre les fonctions d'initialisation et de destruction

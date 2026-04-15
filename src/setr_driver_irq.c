@@ -30,6 +30,9 @@
 #include <linux/mutex.h>            // Mutex et synchronisation
 #include <linux/interrupt.h>        // Définit les symboles pour les interruptions et les tasklets
 #include <linux/atomic.h>           // Synchronisation par valeur atomique
+/* ===== DEBUT AJOUT : en-tête spinlock ===== */
+#include <linux/spinlock.h>         // Spinlock pour synchronisation en contexte atomique
+/* ===== FIN AJOUT ===== */
 
 // Le nom de notre périphérique et le nom de sa classe
 #define DEV_NAME "setrclavier"
@@ -68,10 +71,21 @@ static char   data[TAILLE_BUFFER] = {0};    // Buffer circulaire contenant les c
 static size_t posCouranteLecture = 0;       // Position de la prochaine lecture dans le buffer
 static size_t posCouranteEcriture = 0;      // Position de la prochaine écriture dans le buffer
 
+/* ===== DEBUT AJOUT : compteur d'éléments pour le buffer circulaire ===== */
+static size_t bufferCount = 0;              // Nombre d'éléments actuellement dans le buffer
+/* ===== FIN AJOUT ===== */
+
 static struct class*  setrClasse  = NULL;   // Contiendra les informations sur la classe de notre pilote
 static struct device* setrDevice = NULL;    // Contiendra les informations sur le périphérique associé
 
-static struct mutex sync;                   // Mutex servant à synchroniser les accès au buffer
+/* ===== DEBUT MODIFICATION : remplacement du mutex par un spinlock ===== */
+/* IMPORTANT : Le mutex original (static struct mutex sync) est remplacé par un
+   spinlock car le tasklet s'exécute en contexte softirq et ne peut pas dormir.
+   mutex_lock() peut dormir, ce qui est interdit en contexte atomique.
+   Le spinlock est compatible avec le contexte tasklet. */
+static spinlock_t sync_lock;               // Spinlock servant à synchroniser les accès au buffer
+/* ===== FIN MODIFICATION ===== */
+
 static atomic_t irqEnCours = ATOMIC_INIT(0);  // Pour déterminer si les interruptions doivent être traitées
 
 
@@ -147,6 +161,13 @@ void func_tasklet_polling(unsigned long paramf){
     // Déclarez _toutes_ vos variables locales ici (le module est compilé avec un standard générant
     // un warning si une variable est déclarée après toute ligne de code)
     
+    /* ===== DEBUT AJOUT ===== */
+    int ligne, colonne;
+    unsigned long bitmapEcriture;
+    unsigned long bitmapLecture;
+    int etatCourant[NOMBRE_LIGNES][NOMBRE_COLONNES];
+    /* ===== FIN AJOUT ===== */
+
     // Cette fonction est le coeur d'exécution du tasklet
     // Elle fait à peu de choses près la même chose que le kthread
     // dans le pilote que vous avez précédemment écrit (par polling),
@@ -177,6 +198,69 @@ void func_tasklet_polling(unsigned long paramf){
     // cette fonction n'a pas à être exécutée en boucle, mais vous ne pouvez _pas_
     // faire un msleep ou une autre fonction similaire dans un tasklet!
 
+    /* ===== DEBUT AJOUT : corps du tasklet ===== */
+
+    /* Le flag irqEnCours est déjà à 1 (posé par le IRQ handler).
+       Les nouvelles interruptions ne déclencheront pas de nouveau tasklet. */
+
+    /* Étape 1 : scanner le clavier ligne par ligne */
+    for (ligne = 0; ligne < NOMBRE_LIGNES; ligne++) {
+        /* Activer uniquement la ligne courante */
+        bitmapEcriture = (1UL << ligne);
+        gpiod_set_array_value(gpioEcriture->ndescs,
+                              gpioEcriture->desc,
+                              gpioEcriture->info,
+                              &bitmapEcriture);
+
+        /* Petite attente pour laisser le signal se stabiliser */
+        udelay(5);
+
+        /* Lire l'état des colonnes */
+        bitmapLecture = 0;
+        gpiod_get_array_value(gpioLecture->ndescs,
+                              gpioLecture->desc,
+                              gpioLecture->info,
+                              &bitmapLecture);
+
+        /* Stocker l'état de chaque colonne */
+        for (colonne = 0; colonne < NOMBRE_COLONNES; colonne++) {
+            etatCourant[ligne][colonne] = (bitmapLecture >> colonne) & 1;
+        }
+    }
+
+    /* Étape 2 : comparer avec dernierEtat et mettre à jour le buffer */
+    spin_lock(&sync_lock);
+    for (ligne = 0; ligne < NOMBRE_LIGNES; ligne++) {
+        for (colonne = 0; colonne < NOMBRE_COLONNES; colonne++) {
+            /* Détecter uniquement les nouvelles pressions (transition 0 -> 1) */
+            if (etatCourant[ligne][colonne] && !dernierEtat[ligne][colonne]) {
+                /* Nouvelle touche pressée : écrire dans le buffer */
+                data[posCouranteEcriture] = valeursClavier[ligne][colonne];
+                posCouranteEcriture = (posCouranteEcriture + 1) % TAILLE_BUFFER;
+                if (bufferCount < TAILLE_BUFFER) {
+                    bufferCount++;
+                } else {
+                    /* Buffer plein : écraser le plus ancien */
+                    posCouranteLecture = (posCouranteLecture + 1) % TAILLE_BUFFER;
+                }
+            }
+            /* Mettre à jour dernierEtat */
+            dernierEtat[ligne][colonne] = etatCourant[ligne][colonne];
+        }
+    }
+    spin_unlock(&sync_lock);
+
+    /* Étape 3 : réarmer — remettre toutes les lignes à 1 pour détecter la prochaine IRQ */
+    bitmapEcriture = (1UL << NOMBRE_LIGNES) - 1;
+    gpiod_set_array_value(gpioEcriture->ndescs,
+                          gpioEcriture->desc,
+                          gpioEcriture->info,
+                          &bitmapEcriture);
+
+    /* Étape 4 : réactiver le traitement des interruptions */
+    atomic_set(&irqEnCours, 0);
+
+    /* ===== FIN AJOUT ===== */
 }
 
 // On déclare le tasklet avec la macro DECLARE_TASKLET_OLD
@@ -196,6 +280,15 @@ static irqreturn_t  setr_irq_handler(unsigned int irq, void *dev_id){
     // plus possible le traitement au tasklet!
     // TODO
 
+    /* ===== DEBUT AJOUT : handler IRQ minimal ===== */
+    /* On ne planifie le tasklet que si aucun traitement n'est déjà en cours.
+       atomic_cmpxchg retourne l'ancienne valeur : si c'était 0, on passe à 1
+       et on planifie le tasklet. Sinon, on ignore cette interruption. */
+    if (atomic_cmpxchg(&irqEnCours, 0, 1) == 0) {
+        tasklet_schedule(&tasklet_polling);
+    }
+    /* ===== FIN AJOUT ===== */
+
     // On retourne en indiquant qu'on a géré l'interruption
     return (irqreturn_t) IRQ_HANDLED;
 }
@@ -206,6 +299,13 @@ static int __init setrclavier_init(void){
     // Déclarez _toutes_ vos variables locales ici (le module est compilé avec un standard générant
     // un warning si une variable est déclarée après toute ligne de code)
     int ok;
+
+    /* ===== DEBUT AJOUT : variables locales supplémentaires ===== */
+    int i, j;
+    int err;
+    unsigned long bitmapAllHigh;
+    /* ===== FIN AJOUT ===== */
+
     printk(KERN_INFO "SETR_CLAVIER_IRQ : Initialisation du driver commencee\n");
 
     majorNumber = register_chrdev(0, DEV_NAME, &fops);
@@ -253,23 +353,83 @@ static int __init setrclavier_init(void){
     //
     // Vous devez également initialiser le mutex de synchronisation.
 
-    ok = request_irq(irqno,                 // Le numéro de l'interruption, obtenue avec gpio_to_irq
-         (irq_handler_t) setr_irq_handler,  // Pointeur vers la routine de traitement de l'interruption
-         IRQF_TRIGGER_RISING,               // On veut une interruption sur le front montant (lorsque le bouton est pressé)
-         "setr_irq_handler",                // Le nom de notre interruption
-         NULL);                             // Paramètre supplémentaire inutile pour vous
-    if(ok != 0){
-        printk(KERN_ALERT "Erreur (%d) lors de l'enregistrement IRQ #{%d}!\n", ok, irqno);
-        device_destroy(setrClasse, MKDEV(majorNumber, 0));
-        class_destroy(setrClasse);
-        unregister_chrdev(majorNumber, DEV_NAME);
-        return ok;
+    /* ===== DEBUT AJOUT : initialisation GPIO, spinlock et IRQs ===== */
+
+    /* 1) Enregistrer la table de correspondances GPIO */
+    gpiod_add_lookup_table(&gpios_table);
+
+    /* 2) Obtenir les GPIO d'écriture (lignes) en sortie, initialement haut
+          pour que tout appui de touche génère une IRQ sur les colonnes */
+    gpioEcriture = gpiod_get_array(setrDevice, "ecriture", GPIOD_OUT_HIGH);
+    if (IS_ERR(gpioEcriture)) {
+        err = PTR_ERR(gpioEcriture);
+        printk(KERN_ALERT "SETR_CLAVIER_IRQ : Erreur GPIO ecriture (%d)\n", err);
+        goto err_gpio_ecriture;
     }
 
+    /* 3) Obtenir les GPIO de lecture (colonnes) en entrée */
+    gpioLecture = gpiod_get_array(setrDevice, "lecture", GPIOD_IN);
+    if (IS_ERR(gpioLecture)) {
+        err = PTR_ERR(gpioLecture);
+        printk(KERN_ALERT "SETR_CLAVIER_IRQ : Erreur GPIO lecture (%d)\n", err);
+        goto err_gpio_lecture;
+    }
+
+    /* 4) Mettre explicitement toutes les lignes à 1 (état de repos pour IRQ) */
+    bitmapAllHigh = (1UL << NOMBRE_LIGNES) - 1;
+    gpiod_set_array_value(gpioEcriture->ndescs,
+                          gpioEcriture->desc,
+                          gpioEcriture->info,
+                          &bitmapAllHigh);
+
+    /* 5) Initialiser le spinlock de synchronisation */
+    spin_lock_init(&sync_lock);
+
+    /* 6) Enregistrer une IRQ pour chaque colonne (GPIO de lecture) */
+    for (i = 0; i < NOMBRE_COLONNES; i++) {
+        irqId[i] = gpiod_to_irq(gpioLecture->desc[i]);
+        if (irqId[i] < 0) {
+            printk(KERN_ALERT "SETR_CLAVIER_IRQ : Erreur gpiod_to_irq pour colonne %d\n", i);
+            err = irqId[i];
+            goto err_irq_register;
+        }
+
+        ok = request_irq(irqId[i],                  // Numéro de l'interruption
+             (irq_handler_t) setr_irq_handler,       // Routine de traitement
+             IRQF_TRIGGER_RISING,                    // Front montant
+             "setr_irq_handler",                     // Nom
+             NULL);                                  // Paramètre supplémentaire
+        if (ok != 0) {
+            printk(KERN_ALERT "SETR_CLAVIER_IRQ : Erreur (%d) lors de l'enregistrement IRQ #%d (colonne %d)!\n",
+                   ok, irqId[i], i);
+            err = ok;
+            goto err_irq_register;
+        }
+        printk(KERN_INFO "SETR_CLAVIER_IRQ : IRQ #%d enregistree pour colonne %d\n", irqId[i], i);
+    }
+
+    /* ===== FIN AJOUT ===== */
 
     printk(KERN_INFO "SETR_CLAVIER_IRQ : Fin de l'Initialisation!\n"); // Made it! device was initialized
 
     return 0;
+
+    /* ===== DEBUT AJOUT : labels de cleanup en cas d'erreur ===== */
+err_irq_register:
+    /* Libérer les IRQs déjà enregistrées */
+    for (j = 0; j < i; j++) {
+        free_irq(irqId[j], NULL);
+    }
+    gpiod_put_array(gpioLecture);
+err_gpio_lecture:
+    gpiod_put_array(gpioEcriture);
+err_gpio_ecriture:
+    gpiod_remove_lookup_table(&gpios_table);
+    device_destroy(setrClasse, MKDEV(majorNumber, 0));
+    class_destroy(setrClasse);
+    unregister_chrdev(majorNumber, DEV_NAME);
+    return err;
+    /* ===== FIN AJOUT ===== */
 }
 
 
@@ -278,6 +438,10 @@ static void __exit setrclavier_exit(void){
     // Déclarez _toutes_ vos variables locales ici (le module est compilé avec un standard générant
     // un warning si une variable est déclarée après toute ligne de code)
 
+    /* ===== DEBUT AJOUT ===== */
+    int i;
+    /* ===== FIN AJOUT ===== */
+
     // TODO
     // Écrivez le code permettant de relâcher (libérer) les GPIO
     // 1) Relâchez les interruptions qui ont été précédemment enregistrées. 
@@ -285,6 +449,24 @@ static void __exit setrclavier_exit(void){
     // 2) Libérez les GPIO obtenus dans l'initialisation
     // 3) Retirez la table de correspondances avec gpiod_remove_lookup_table
 
+    /* ===== DEBUT AJOUT : libération des ressources ===== */
+
+    /* Arrêter le tasklet s'il est en cours d'exécution */
+    tasklet_kill(&tasklet_polling);
+
+    /* 1) Libérer les IRQs */
+    for (i = 0; i < NOMBRE_COLONNES; i++) {
+        free_irq(irqId[i], NULL);
+    }
+
+    /* 2) Libérer les GPIO */
+    gpiod_put_array(gpioLecture);
+    gpiod_put_array(gpioEcriture);
+
+    /* 3) Retirer la table de correspondances */
+    gpiod_remove_lookup_table(&gpios_table);
+
+    /* ===== FIN AJOUT ===== */
 
     // On retire correctement les différentes composantes du pilote
     device_destroy(setrClasse, MKDEV(majorNumber, 0));
@@ -312,6 +494,14 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *of
     // Déclarez _toutes_ vos variables locales ici (le module est compilé avec un standard générant
     // un warning si une variable est déclarée après toute ligne de code)
 
+    /* ===== DEBUT AJOUT ===== */
+    size_t nBytes;
+    size_t firstChunk;
+    size_t secondChunk;
+    int err;
+    char tempBuf[TAILLE_BUFFER];   /* Buffer local pour copier les données hors du spinlock */
+    /* ===== FIN AJOUT ===== */
+
     // TODO
     // Implémentez cette fonction de lecture
     //
@@ -329,6 +519,51 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *of
     // revienne alors à 0. Il est donc tout à fait possible que posCouranteEcriture soit INFÉRIEUR à
     // posCouranteLecture, et vous devez gérer ce cas sans perdre de caractères et en respectant les
     // autres conditions (par exemple, ne jamais copier plus que len caractères).
+
+    /* ===== DEBUT AJOUT : lecture du buffer circulaire ===== */
+
+    /* Utilisation de spin_lock_bh : désactive les softirqs (donc les tasklets)
+       sur ce CPU pendant qu'on tient le verrou, évitant un deadlock.
+       IMPORTANT : copy_to_user peut dormir (page fault), donc on copie
+       d'abord dans un buffer local sous le spinlock, puis on appelle
+       copy_to_user après avoir relâché le verrou. */
+    spin_lock_bh(&sync_lock);
+
+    /* Nombre d'octets à copier = min(demandé, disponible) */
+    nBytes = min(len, bufferCount);
+
+    if (nBytes == 0) {
+        spin_unlock_bh(&sync_lock);
+        return 0;
+    }
+
+    /* Copier dans le buffer local en gérant le wrap-around */
+    firstChunk = TAILLE_BUFFER - posCouranteLecture;
+    if (firstChunk > nBytes)
+        firstChunk = nBytes;
+
+    memcpy(tempBuf, &data[posCouranteLecture], firstChunk);
+
+    secondChunk = nBytes - firstChunk;
+    if (secondChunk > 0) {
+        memcpy(tempBuf + firstChunk, &data[0], secondChunk);
+    }
+
+    /* Avancer la position de lecture et décrémenter le compteur */
+    posCouranteLecture = (posCouranteLecture + nBytes) % TAILLE_BUFFER;
+    bufferCount -= nBytes;
+
+    spin_unlock_bh(&sync_lock);
+
+    /* Copier vers l'espace utilisateur APRÈS avoir relâché le spinlock */
+    err = copy_to_user(buffer, tempBuf, nBytes);
+    if (err) {
+        return -EFAULT;
+    }
+
+    return (ssize_t)nBytes;
+
+    /* ===== FIN AJOUT ===== */
 }
 
 

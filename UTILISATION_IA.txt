@@ -22,3 +22,87 @@ Exemple 1:
 Question 4 : Avez-vous rencontré des problèmes lors de l'utilisation de l'IA (mauvaise compréhension des commandes fournies, résultats erronés, etc.)? Qu'avez-vous fait pour les régler?
 Benoît Audet: Non
 Anthony Veillet: non
+
+
+
+### Compilation
+
+```bash
+# Sur la machine hôte (cross-compilation)
+make clean
+make
+# Doit produire setr_driver_polling.ko et setr_driver_irq.ko sans warning
+```
+
+### Transfert vers le Raspberry Pi
+
+```bash
+# Adapter l'adresse IP dans syncFiles.sh d'abord, puis :
+./syncFiles.sh .
+# Ou manuellement :
+scp *.ko pi@<ADRESSE_IP>:/home/pi/projects/laboratoire4/
+```
+
+### Charger / décharger les modules
+
+```bash
+# Sur le Raspberry Pi (via SSH)
+
+# --- Test du driver polling ---
+sudo insmod setr_driver_polling.ko
+# Optionnel : changer le temps de polling
+# sudo insmod setr_driver_polling.ko pausePollingMs=30
+lsmod | grep setr
+sudo dmesg | tail -10    # Vérifier "Initialisation" et "Poll clavier declenche"
+
+# Tester la lecture :
+sudo tail -f /dev/setrclavier ---disable-inotify
+
+# Décharger :
+sudo rmmod setr_driver_polling
+sudo dmesg | tail -5     # Vérifier "Poll clavier stop" et "Terminaison"
+
+# --- Test du driver IRQ ---
+sudo insmod setr_driver_irq.ko
+sudo dmesg | tail -15    # Vérifier "Initialisation" et les IRQs enregistrées
+sudo tail -f /dev/setrclavier ---disable-inotify
+sudo rmmod setr_driver_irq
+```
+
+### Ce qu'on doit observer dans `dmesg`
+
+**Polling :**
+```
+SETR_CLAVIER : Initialisation du driver commencee
+SETR_CLAVIER : Poll clavier declenche!
+SETR_CLAVIER : Fin de l'Initialisation!
+```
+Au rmmod :
+```
+SETR_CLAVIER : Poll clavier stop!
+SETR_CLAVIER : Terminaison du driver
+```
+
+**IRQ :**
+```
+SETR_CLAVIER_IRQ : Initialisation du driver commencee
+SETR_CLAVIER_IRQ : device class OK
+SETR_CLAVIER_IRQ : IRQ #... enregistree pour colonne 0
+SETR_CLAVIER_IRQ : IRQ #... enregistree pour colonne 1
+SETR_CLAVIER_IRQ : IRQ #... enregistree pour colonne 2
+SETR_CLAVIER_IRQ : Fin de l'Initialisation!
+```
+
+### Ce qu'on doit observer avec `tail -f /dev/setrclavier`
+
+- Appui sur `5` → le caractère `5` apparaît **une seule fois**
+- Maintenir `5` enfoncé → **pas de répétition**
+- Relâcher `5`, rappuyer → `5` apparaît à nouveau
+- Appui simultané `1` + `9` → les deux caractères apparaissent
+- Appuyer sur >10 touches avec `tail` arrêté, puis relancer `tail` → seuls les 10 derniers caractères apparaissent (buffer circulaire avec écrasement des plus anciens)
+
+### Test du buffer circulaire (overflow)
+
+1. Arrêter `tail`
+2. Appuyer sur les touches `1 2 3 4 5 6 7 8 9 * 0 #` (12 touches, buffer = 10)
+3. Relancer `tail` → on doit voir `34567890#` (les 10 derniers, les 2 premiers écrasés) — l'ordre peut varier selon le timing exact, mais le principe est que seuls les 10 derniers sont conservés.
