@@ -10,7 +10,7 @@ Anthony Veillet: ChatGPT 5, Claude Opus
 
 Question 3 : Pour la réalisation de quelles tâches en particulier? Donnez un exemple de "prompt" utilisé et de résultat.
 Benoît Audet:
-J'ai un Segmentation Fault, trouve la source du problème dans mon code.
+J'ai un problème de buffer, trouve la source de l'erreur.
 
 Anthony Veillet:
 Exemple 1:
